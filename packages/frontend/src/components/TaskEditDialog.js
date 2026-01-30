@@ -10,24 +10,28 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { MAX_TASK_TITLE_LENGTH } from '../utils/constants';
+import TagSelector from './TagSelector';
 
 /**
  * Dialog component for editing task details
  * @param {Object} props - Component props
  * @param {boolean} props.open - Whether the dialog is open
  * @param {Object} props.task - The task to edit
+ * @param {Array} props.availableTags - Array of available tags
  * @param {Function} props.onClose - Callback when dialog is closed
  * @param {Function} props.onSave - Callback when task is saved
  */
-function TaskEditDialog({ open, task, onClose, onSave }) {
+function TaskEditDialog({ open, task, availableTags = [], onClose, onSave }) {
   const [title, setTitle] = useState('');
   const [dueDate, setDueDate] = useState(null);
+  const [selectedTags, setSelectedTags] = useState([]);
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (task) {
       setTitle(task.title || '');
       setDueDate(task.due_date ? new Date(task.due_date) : null);
+      setSelectedTags(task.tags || []);
       setError('');
     }
   }, [task]);
@@ -49,6 +53,7 @@ function TaskEditDialog({ open, task, onClose, onSave }) {
       ...task,
       title: title.trim(),
       dueDate: dueDate ? dueDate.toISOString().split('T')[0] : null,
+      tags: selectedTags,
     });
 
     // Reset and close
@@ -101,6 +106,12 @@ function TaskEditDialog({ open, task, onClose, onSave }) {
               }}
             />
           </LocalizationProvider>
+
+          <TagSelector
+            availableTags={availableTags}
+            selectedTags={selectedTags}
+            onTagsChange={setSelectedTags}
+          />
         </Box>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>

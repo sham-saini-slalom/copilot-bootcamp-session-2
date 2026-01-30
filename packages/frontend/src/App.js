@@ -21,23 +21,29 @@ import theme from './theme/theme';
 import { MAX_TASK_TITLE_LENGTH } from './utils/constants';
 import { formatDate, getDueDateColor, formatRelativeDate } from './utils/dateHelpers';
 import TaskEditDialog from './components/TaskEditDialog';
+import TagChip from './components/TagChip';
+import TaskFilter from './components/TaskFilter';
 
 function App() {
   const [tasks, setTasks] = useState([]);
+  const [tags, setTags] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [newTask, setNewTask] = useState('');
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [editDialog, setEditDialog] = useState({ open: false, task: null });
+  const [selectedTagFilter, setSelectedTagFilter] = useState(null);
 
   useEffect(() => {
     fetchTasks();
+    fetchTags();
   }, []);
 
-  const fetchTasks = async () => {
+  const fetchTasks = async (tagFilter = null) => {
     try {
       setLoading(true);
-      const response = await fetch('/api/tasks');
+      const url = tagFilter ? `/api/tasks?tag=${tagFilter}` : '/api/tasks';
+      const response = await fetch(url);
       if (!response.ok) {
         throw new Error('Network response was not ok');
       }
@@ -49,6 +55,20 @@ function App() {
       console.error('Error fetching tasks:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchTags = async () => {
+    try {
+      const response = await fetch('/api/tags');
+      if (!response.ok) {
+        throw new Error('Failed to fetch tags');
+      }
+      const result = await response.json();
+      setTags(result);
+    } catch (err) {
+      console.error('Error fetching tags:', err);
+      // Don't show error for tags, it's not critical
     }
   };
 
@@ -129,6 +149,7 @@ function App() {
 
   const handleSaveEdit = async (updatedTask) => {
     try {
+      // Update task details
       const response = await fetch(`/api/tasks/${updatedTask.id}`, {
         method: 'PUT',
         headers: {
@@ -146,13 +167,43 @@ function App() {
       }
 
       const result = await response.json();
-      setTasks(tasks.map(task => task.id === updatedTask.id ? result : task));
+
+      // Update tags if they changed
+      const originalTags = updatedTask.tags || [];
+      const originalTagIds = new Set((result.tags || []).map(t => t.id));
+      const newTagIds = new Set(originalTags.map(t => t.id));
+
+      // Remove tags that are no longer selected
+      for (const tag of result.tags || []) {
+        if (!newTagIds.has(tag.id)) {
+          await fetch(`/api/tasks/${updatedTask.id}/tags/${tag.id}`, { method: 'DELETE' });
+        }
+      }
+
+      // Add new tags
+      for (const tag of originalTags) {
+        if (!originalTagIds.has(tag.id)) {
+          await fetch(`/api/tasks/${updatedTask.id}/tags`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tagId: tag.id }),
+          });
+        }
+      }
+
+      // Refresh tasks to get updated tag associations
+      await fetchTasks(selectedTagFilter?.id);
       showSnackbar('Task updated successfully');
       handleCloseEdit();
     } catch (err) {
       showSnackbar('Error updating task: ' + err.message, 'error');
       console.error('Error updating task:', err);
     }
+  };
+
+  const handleTagFilterChange = (tag) => {
+    setSelectedTagFilter(tag);
+    fetchTasks(tag?.id);
   };
 
   const handleDelete = async (taskId) => {
@@ -223,6 +274,13 @@ function App() {
               Tasks
             </Typography>
 
+            {/* Tag Filter */}
+            <TaskFilter
+              tags={tags}
+              selectedTag={selectedTagFilter}
+              onTagSelect={handleTagFilterChange}
+            />
+
             {loading && (
               <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
                 <CircularProgress />
@@ -279,6 +337,13 @@ function App() {
                             />
                           </Box>
                         )}
+                        {task.tags && task.tags.length > 0 && (
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
+                            {task.tags.map((tag) => (
+                              <TagChip key={tag.id} tag={tag} size="small" />
+                            ))}
+                          </Box>
+                        )}
                       </Box>
                       <IconButton
                         size="small"
@@ -319,6 +384,7 @@ function App() {
           <TaskEditDialog
             open={editDialog.open}
             task={editDialog.task}
+            availableTags={tags}
             onClose={handleCloseEdit}
             onSave={handleSaveEdit}
           />

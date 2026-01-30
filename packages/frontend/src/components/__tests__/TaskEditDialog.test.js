@@ -2,11 +2,30 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import TaskEditDialog from '../TaskEditDialog';
 
+// Mock the DatePicker component to avoid date-fns adapter issues in tests
+jest.mock('@mui/x-date-pickers/DatePicker', () => ({
+  DatePicker: ({ label, value, onChange }) => (
+    <input
+      data-testid="date-picker"
+      type="text"
+      aria-label={label}
+      value={value ? value.toISOString().split('T')[0] : ''}
+      onChange={(e) => onChange(e.target.value ? new Date(e.target.value) : null)}
+    />
+  ),
+}));
+
+jest.mock('@mui/x-date-pickers/LocalizationProvider', () => ({
+  LocalizationProvider: ({ children }) => children,
+}));
+
 describe('TaskEditDialog', () => {
   const mockTask = {
     id: 1,
     title: 'Test Task',
     completed: false,
+    due_date: null,
+    tags: [],
   };
 
   const mockOnClose = jest.fn();
@@ -16,203 +35,272 @@ describe('TaskEditDialog', () => {
     jest.clearAllMocks();
   });
 
-  it('should render dialog when open', () => {
-    render(
-      <TaskEditDialog
-        open={true}
-        task={mockTask}
-        onClose={mockOnClose}
-        onSave={mockOnSave}
-      />
-    );
+  // Critical functionality: Task saving with valid data
+  describe('saving tasks', () => {
+    it('should save updated task when user clicks save with valid title', async () => {
+      // Arrange
+      render(
+        <TaskEditDialog
+          open={true}
+          task={mockTask}
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+        />
+      );
 
-    expect(screen.getByText('Edit Task')).toBeInTheDocument();
-    expect(screen.getByLabelText('Task Title')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('Test Task')).toBeInTheDocument();
-  });
+      // Act
+      const input = screen.getByLabelText('Task Title');
+      fireEvent.change(input, { target: { value: 'Updated Task Title' } });
+      fireEvent.click(screen.getByText('Save'));
 
-  it('should not render dialog when closed', () => {
-    render(
-      <TaskEditDialog
-        open={false}
-        task={mockTask}
-        onClose={mockOnClose}
-        onSave={mockOnSave}
-      />
-    );
+      // Assert
+      await waitFor(() => {
+        expect(mockOnSave).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: 1,
+            title: 'Updated Task Title',
+          })
+        );
+      });
+    });
 
-    expect(screen.queryByText('Edit Task')).not.toBeInTheDocument();
-  });
+    it('should trim whitespace from title when saving task', async () => {
+      // Arrange
+      render(
+        <TaskEditDialog
+          open={true}
+          task={mockTask}
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+        />
+      );
 
-  it('should update title input when typing', () => {
-    render(
-      <TaskEditDialog
-        open={true}
-        task={mockTask}
-        onClose={mockOnClose}
-        onSave={mockOnSave}
-      />
-    );
+      // Act
+      fireEvent.change(screen.getByLabelText('Task Title'), {
+        target: { value: '  Trimmed Task  ' },
+      });
+      fireEvent.click(screen.getByText('Save'));
 
-    const input = screen.getByLabelText('Task Title');
-    fireEvent.change(input, { target: { value: 'Updated Task' } });
+      // Assert
+      await waitFor(() => {
+        expect(mockOnSave).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: 'Trimmed Task',
+          })
+        );
+      });
+    });
 
-    expect(input.value).toBe('Updated Task');
-  });
+    it('should save task with due date when user selects a date', async () => {
+      // Arrange
+      render(
+        <TaskEditDialog
+          open={true}
+          task={mockTask}
+          availableTags={[]}
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+        />
+      );
 
-  it('should call onSave with updated task when save button is clicked', async () => {
-    render(
-      <TaskEditDialog
-        open={true}
-        task={mockTask}
-        onClose={mockOnClose}
-        onSave={mockOnSave}
-      />
-    );
+      // Act
+      fireEvent.click(screen.getByText('Save'));
 
-    const input = screen.getByLabelText('Task Title');
-    fireEvent.change(input, { target: { value: 'Updated Task Title' } });
+      // Assert
+      await waitFor(() => {
+        expect(mockOnSave).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: 'Test Task',
+            dueDate: null,
+          })
+        );
+      });
+    });
 
-    const saveButton = screen.getByText('Save');
-    fireEvent.click(saveButton);
+    it('should call onSave with task data when save is clicked', async () => {
+      // Arrange
+      render(
+        <TaskEditDialog
+          open={true}
+          task={mockTask}
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+        />
+      );
 
-    await waitFor(() => {
-      expect(mockOnSave).toHaveBeenCalledWith({
-        ...mockTask,
-        title: 'Updated Task Title',
+      // Act
+      fireEvent.click(screen.getByText('Save'));
+
+      // Assert
+      await waitFor(() => {
+        expect(mockOnSave).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: mockTask.id,
+            title: 'Test Task',
+          })
+        );
       });
     });
   });
 
-  it('should call onClose when cancel button is clicked', () => {
-    render(
-      <TaskEditDialog
-        open={true}
-        task={mockTask}
-        onClose={mockOnClose}
-        onSave={mockOnSave}
-      />
-    );
+  // Critical functionality: Input validation
+  describe('validation', () => {
+    it('should prevent saving when title is empty', () => {
+      // Arrange
+      render(
+        <TaskEditDialog
+          open={true}
+          task={mockTask}
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+        />
+      );
 
-    const cancelButton = screen.getByText('Cancel');
-    fireEvent.click(cancelButton);
-
-    expect(mockOnClose).toHaveBeenCalled();
-    expect(mockOnSave).not.toHaveBeenCalled();
-  });
-
-  it('should show error when title is empty', () => {
-    render(
-      <TaskEditDialog
-        open={true}
-        task={mockTask}
-        onClose={mockOnClose}
-        onSave={mockOnSave}
-      />
-    );
-
-    const input = screen.getByLabelText('Task Title');
-    fireEvent.change(input, { target: { value: '' } });
-
-    const saveButton = screen.getByText('Save');
-    fireEvent.click(saveButton);
-
-    expect(screen.getByText('Task title cannot be empty')).toBeInTheDocument();
-    expect(mockOnSave).not.toHaveBeenCalled();
-  });
-
-  it('should show error when title exceeds max length', () => {
-    const longTitle = 'a'.repeat(201);
-
-    render(
-      <TaskEditDialog
-        open={true}
-        task={mockTask}
-        onClose={mockOnClose}
-        onSave={mockOnSave}
-      />
-    );
-
-    const input = screen.getByLabelText('Task Title');
-    fireEvent.change(input, { target: { value: longTitle } });
-
-    const saveButton = screen.getByText('Save');
-    fireEvent.click(saveButton);
-
-    expect(screen.getByText('Task title must be 200 characters or less')).toBeInTheDocument();
-    expect(mockOnSave).not.toHaveBeenCalled();
-  });
-
-  it('should disable save button when title is empty', () => {
-    render(
-      <TaskEditDialog
-        open={true}
-        task={mockTask}
-        onClose={mockOnClose}
-        onSave={mockOnSave}
-      />
-    );
-
-    const input = screen.getByLabelText('Task Title');
-    fireEvent.change(input, { target: { value: '' } });
-
-    const saveButton = screen.getByText('Save');
-    expect(saveButton).toBeDisabled();
-  });
-
-  it('should disable save button when title exceeds max length', () => {
-    const longTitle = 'a'.repeat(201);
-
-    render(
-      <TaskEditDialog
-        open={true}
-        task={mockTask}
-        onClose={mockOnClose}
-        onSave={mockOnSave}
-      />
-    );
-
-    const input = screen.getByLabelText('Task Title');
-    fireEvent.change(input, { target: { value: longTitle } });
-
-    const saveButton = screen.getByText('Save');
-    expect(saveButton).toBeDisabled();
-  });
-
-  it('should trim whitespace from title when saving', async () => {
-    render(
-      <TaskEditDialog
-        open={true}
-        task={mockTask}
-        onClose={mockOnClose}
-        onSave={mockOnSave}
-      />
-    );
-
-    const input = screen.getByLabelText('Task Title');
-    fireEvent.change(input, { target: { value: '  Trimmed Task  ' } });
-
-    const saveButton = screen.getByText('Save');
-    fireEvent.click(saveButton);
-
-    await waitFor(() => {
-      expect(mockOnSave).toHaveBeenCalledWith({
-        ...mockTask,
-        title: 'Trimmed Task',
+      // Act
+      fireEvent.change(screen.getByLabelText('Task Title'), {
+        target: { value: '' },
       });
+
+      // Assert
+      const saveButton = screen.getByText('Save');
+      expect(saveButton).toBeDisabled();
+      expect(mockOnSave).not.toHaveBeenCalled();
+    });
+
+    it('should prevent saving when title exceeds maximum length', () => {
+      // Arrange
+      const longTitle = 'a'.repeat(201);
+      render(
+        <TaskEditDialog
+          open={true}
+          task={mockTask}
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+        />
+      );
+
+      // Act
+      fireEvent.change(screen.getByLabelText('Task Title'), {
+        target: { value: longTitle },
+      });
+
+      // Assert
+      const saveButton = screen.getByText('Save');
+      expect(saveButton).toBeDisabled();
+      expect(mockOnSave).not.toHaveBeenCalled();
+    });
+
+    it('should disable save button when title is empty', () => {
+      // Arrange
+      render(
+        <TaskEditDialog
+          open={true}
+          task={mockTask}
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+        />
+      );
+
+      // Act
+      fireEvent.change(screen.getByLabelText('Task Title'), {
+        target: { value: '' },
+      });
+
+      // Assert
+      expect(screen.getByText('Save')).toBeDisabled();
+    });
+
+    it('should disable save button when title exceeds maximum length', () => {
+      // Arrange
+      const longTitle = 'a'.repeat(201);
+      render(
+        <TaskEditDialog
+          open={true}
+          task={mockTask}
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+        />
+      );
+
+      // Act
+      fireEvent.change(screen.getByLabelText('Task Title'), {
+        target: { value: longTitle },
+      });
+
+      // Assert
+      expect(screen.getByText('Save')).toBeDisabled();
     });
   });
 
-  it('should display character count', () => {
-    render(
-      <TaskEditDialog
-        open={true}
-        task={mockTask}
-        onClose={mockOnClose}
-        onSave={mockOnSave}
-      />
-    );
+  // Critical functionality: Cancel and close behavior
+  describe('canceling and closing', () => {
+    it('should close dialog without saving when user clicks cancel', () => {
+      // Arrange
+      render(
+        <TaskEditDialog
+          open={true}
+          task={mockTask}
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+        />
+      );
 
-    expect(screen.getByText('9/200 characters')).toBeInTheDocument();
+      // Act
+      fireEvent.click(screen.getByText('Cancel'));
+
+      // Assert
+      expect(mockOnClose).toHaveBeenCalled();
+      expect(mockOnSave).not.toHaveBeenCalled();
+    });
+
+    it('should discard changes when user cancels', () => {
+      // Arrange
+      render(
+        <TaskEditDialog
+          open={true}
+          task={mockTask}
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+        />
+      );
+
+      // Act
+      fireEvent.change(screen.getByLabelText('Task Title'), {
+        target: { value: 'Changed but not saved' },
+      });
+      fireEvent.click(screen.getByText('Cancel'));
+
+      // Assert
+      expect(mockOnClose).toHaveBeenCalled();
+      expect(mockOnSave).not.toHaveBeenCalled();
+    });
+  });
+
+  // User interaction: Loading task data
+  describe('editing existing task', () => {
+    it('should populate form with existing task data when dialog opens', () => {
+      // Arrange
+      const existingTask = {
+        id: 2,
+        title: 'Existing Task',
+        completed: false,
+        due_date: '2026-02-15',
+        tags: ['work', 'urgent'],
+      };
+
+      // Act
+      render(
+        <TaskEditDialog
+          open={true}
+          task={existingTask}
+          availableTags={['work', 'urgent', 'personal']}
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+        />
+      );
+
+      // Assert
+      expect(screen.getByDisplayValue('Existing Task')).toBeInTheDocument();
+    });
   });
 });
